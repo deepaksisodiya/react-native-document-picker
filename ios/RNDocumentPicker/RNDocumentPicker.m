@@ -11,7 +11,7 @@
 #define IDIOM    UI_USER_INTERFACE_IDIOM()
 #define IPAD     UIUserInterfaceIdiomPad
 
-@interface RNDocumentPicker () <UIDocumentMenuDelegate,UIDocumentPickerDelegate>
+@interface RNDocumentPicker () <UIDocumentMenuDelegate,UIDocumentPickerDelegate, UIImagePickerControllerDelegate>
 @end
 
 
@@ -43,6 +43,19 @@ RCT_EXPORT_METHOD(show:(NSDictionary *)options
 
     NSArray *allowedUTIs = [RCTConvert NSArray:options[@"filetype"]];
     UIDocumentMenuViewController *documentPicker = [[UIDocumentMenuViewController alloc] initWithDocumentTypes:(NSArray *)allowedUTIs inMode:UIDocumentPickerModeImport];
+    
+    [documentPicker addOptionWithTitle:@"Photos" image:nil order:UIDocumentMenuOrderFirst handler:^{
+        
+        UIImagePickerController *imagePickerController = [[UIImagePickerController alloc] init];
+        imagePickerController.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+        imagePickerController.delegate = self;
+        
+        UIViewController *rootViewController = [[[[UIApplication sharedApplication]delegate] window] rootViewController];
+        while (rootViewController.modalViewController) {
+            rootViewController = rootViewController.modalViewController;
+        }
+        [rootViewController presentViewController:imagePickerController animated:YES completion:nil];
+    }];
 
     [composeCallbacks addObject:callback];
 
@@ -65,6 +78,38 @@ RCT_EXPORT_METHOD(show:(NSDictionary *)options
     [rootViewController presentViewController:documentPicker animated:YES completion:nil];
 }
 
+- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary *)info
+{
+    NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] init];
+    __block NSError *error;
+    
+    RCTResponseSenderBlock callback = [composeCallbacks lastObject];
+    [composeCallbacks removeLastObject];
+    
+    NSURL *url = [info valueForKey:@"UIImagePickerControllerImageURL"];
+    
+    [url startAccessingSecurityScopedResource];
+    
+    [coordinator coordinateReadingItemAtURL:url options:NSFileCoordinatorReadingResolvesSymbolicLink error:&error byAccessor:^(NSURL *newURL) {
+        NSMutableDictionary* result = [NSMutableDictionary dictionary];
+        
+        [result setValue:newURL.absoluteString forKey:@"uri"];
+        [result setValue:[newURL lastPathComponent] forKey:@"fileName"];
+        
+        NSError *attributesError = nil;
+        NSDictionary *fileAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:newURL.path error:&attributesError];
+        if(!attributesError) {
+            [result setValue:[fileAttributes objectForKey:NSFileSize] forKey:@"fileSize"];
+        } else {
+            NSLog(@"%@", attributesError);
+        }
+        
+        [url stopAccessingSecurityScopedResource];
+        
+        callback(@[[NSNull null], result]);
+    }];
+    [picker dismissViewControllerAnimated:true completion:nil];
+}
 
 - (void)documentMenu:(UIDocumentMenuViewController *)documentMenu didPickDocumentPicker:(UIDocumentPickerViewController *)documentPicker {
     documentPicker.delegate = self;
